@@ -99,8 +99,7 @@ def extract_listings_from_output(output):
 def generate_story(listing, category):
     """
     Use GPT to generate a creative and engaging story about the listing.
-    
-    Updated to use the new openai>=1.0.0 style: openai.Chat.create(...)
+    Uses openai.ChatCompletion.create(...) for openai>=1.0.0
     """
     prompt = f"""
     You are a local content creator in Trivandrum. Write a captivating and creative announcement for a new {category[:-1]} in Trivandrum. Highlight its unique features, ambiance, specialties, and why locals and visitors should visit. Include a friendly invitation to check it out.
@@ -111,16 +110,13 @@ def generate_story(listing, category):
 
     Story:
     """
-
-    # IMPORTANT: Use the new Chat interface introduced in openai>=1.0.0
     try:
-        response = openai.Chat.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ],
-            # Adjust your parameters as needed
             temperature=0.8,
             max_tokens=200
         )
@@ -306,6 +302,9 @@ def run_search(category):
 ##############################################################################
 
 def main():
+    # Make sure to set the API key for openai
+    openai.api_key = os.getenv("OPENAI_API_KEY")
+
     st.set_page_config(page_title="Trivandrum Experiences Finder", layout="wide")
     st.title("🌟 Trivandrum Experiences Finder")
 
@@ -337,6 +336,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Make sure to set the API key properly for new openai>=1.0.0 usage
-    openai.api_key = os.getenv("OPENAI_API_KEY")
     main()
