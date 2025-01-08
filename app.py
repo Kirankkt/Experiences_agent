@@ -59,7 +59,7 @@ def is_valid_url(url, retries=2, delay=1):
 def validate_and_normalize_link(link):
     """
     Try to return a valid link. If invalid, return the original text.
-    Skip validation for aggregator or marketplace domains if desired.
+    Skip validation for certain aggregator or marketplace domains if desired.
     """
     skip_validation_domains = ["olx.in", "quikr.com"]
     link = link.strip()
@@ -70,14 +70,39 @@ def validate_and_normalize_link(link):
     potential_link = 'https://' + link
     return potential_link if is_valid_url(potential_link) else link
 
+def extract_listings_from_output(output):
+    """
+    Extract relevant data from the agent's output.
+    """
+    try:
+        results_text = str(output)
+    except Exception as e:
+        logging.error(f"Output extraction error: {e}")
+        return []
+
+    pattern = r'Title:\s*(.*?)\s*Link:\s*(.*?)\s*Snippet:\s*(.*?)\s*(?=Title:|$)'
+    matches = re.findall(pattern, results_text, re.DOTALL | re.MULTILINE)
+
+    listings = []
+    for match in matches:
+        try:
+            listing = {
+                'Name': match[0].strip(),
+                'Link': validate_and_normalize_link(match[1].strip()),
+                'Description': match[2].strip()
+            }
+            listings.append(listing)
+        except Exception as e:
+            logging.warning(f"Error processing listing: {e}")
+    return listings
+
 def generate_story(listing, category):
     """
     Use GPT to generate a creative and engaging story about the listing.
     Uses openai.ChatCompletion.create(...) for openai>=1.0.0
     """
     prompt = f"""
-    You are a local content creator in Trivandrum. 
-    Write a captivating and creative announcement for a new {category[:-1]} in Trivandrum. 
+    You are a local content creator in Trivandrum. Write a captivating and creative announcement for a new {category[:-1]} in Trivandrum. 
     Highlight its unique features, ambiance, specialties, and why locals and visitors should visit. 
     Include a friendly invitation to check it out.
 
@@ -117,55 +142,22 @@ def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
         logging.error(f"Excel save error: {e}")
         return None, None
 
-##############################################################################
-#                         MAIN SEARCH LOGIC                                  #
-##############################################################################
-
 def perform_search(category):
     """
     Perform a web search using Serper API and return the raw results.
-    We refine the query to skip aggregator sites and force 'official site'.
+    We refine the query to skip aggregator sites and "top 10" style pages.
     """
-    # Refined queries to skip aggregator references
+    # We specifically tell it: official websites, skip aggregator keywords
     base_queries = {
-        "Restaurants": (
-            "restaurants in Trivandrum "
-            "('official website' OR 'official site') "
-            "-tripadvisor -zomato -justdial -wanderlog -yelp "
-            "-blog -list -ranking -guide -youtube -facebook "
-            "-instagram -quora -reddit -twitter -map "
-            "-foursquare -swiggy -magicpin -foodie -near.me "
-            "-timesofindia -thehindu"
-        ),
-        "Boutiques": (
-            "boutiques in Trivandrum "
-            "('official website' OR 'official site') "
-            "-tripadvisor -zomato -justdial -wanderlog -yelp "
-            "-blog -list -ranking -guide -youtube -facebook "
-            "-instagram -quora -reddit -twitter -map "
-            "-foursquare -swiggy -magicpin -near.me "
-            "-timesofindia -thehindu"
-        ),
-        "Experiences": (
-            "experiences in Trivandrum "
-            "('official website' OR 'official site') "
-            "-tripadvisor -zomato -justdial -wanderlog -yelp "
-            "-blog -list -ranking -guide -youtube -facebook "
-            "-instagram -quora -reddit -twitter -map "
-            "-foursquare -swiggy -magicpin -near.me "
-            "-timesofindia -thehindu"
-        ),
+        "Restaurants": "restaurants in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -timesofindia -thehindu -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter",
+        "Boutiques": "boutiques in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter",
+        "Experiences": "experiences in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter"
     }
-
+    
     # If the category is not in the base_queries, do a fallback
     search_query = base_queries.get(
         category, 
-        f"{category} in Trivandrum ('official website' OR 'official site') "
-        "-tripadvisor -zomato -justdial -wanderlog -yelp "
-        "-blog -list -ranking -guide -youtube -facebook "
-        "-instagram -quora -reddit -twitter -map "
-        "-foursquare -swiggy -magicpin -near.me "
-        "-timesofindia -thehindu"
+        f"{category} in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter"
     )
 
     logging.info(f"Performing search with query: {search_query}")
@@ -192,20 +184,13 @@ def parse_search_results(results):
     """
     Parse Serper API results to extract listings.
     Exclude aggregator or big directories for the final display.
-    Also skip any 'top 10' or 'best X' style pages.
     """
-    # Expand aggregator or unwanted domains
+    # Expand the aggregator or unwanted domains you want to skip
     unwanted_domains = [
-        "tripadvisor.com", "tripadvisor.in",
-        "zomato.com", "justdial.com",
-        "wanderlog.com", "yelp.com",
-        "facebook.com", "instagram.com",
-        "quora.com", "reddit.com",
-        "twitter.com", "swiggy.com",
-        "blogspot.com", "wordpress.com",
-        "magicpin.in", "foursquare.com",
-        "thehindu.com", "timesofindia.com",
-        "near-me.com"
+        "reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com", 
+        "tripadvisor.com", "tripadvisor.in", "zomato.com", "justdial.com", 
+        "wanderlog.com", "youtube.com", "yelp.com", "blogspot.com", "wordpress.com",
+        "thehindu.com", "timesofindia.com", "indiatimes.com"
     ]
 
     try:
@@ -216,27 +201,25 @@ def parse_search_results(results):
 
     listings = []
     initial_count = len(organic_results)
-    aggregator_indicators = ["top 10", "top five", "best 10", "best 5", "list", "ranking", "guide"]
-
     for item in organic_results:
         try:
             title = item.get("title", "").strip()
             link = item.get("link", "").strip()
             snippet = item.get("snippet", "").strip()
+
             if not (title and link and snippet):
                 continue
 
-            # Skip if domain is unwanted
+            # If domain is in the unwanted list, skip
+            # e.g. if the link is https://www.tripadvisor.com/....
             skip_it = any(domain in link for domain in unwanted_domains)
             if skip_it:
                 continue
 
-            # Also skip if title/snippet suggests aggregator or 'top 10' content
-            title_lower = title.lower()
-            snippet_lower = snippet.lower()
-            if any(indicator in title_lower for indicator in aggregator_indicators):
-                continue
-            if any(indicator in snippet_lower for indicator in aggregator_indicators):
+            # Optionally also skip if the title/snippet looks like "top 10" or "best X"
+            # That might help further reduce aggregator style results
+            aggregator_indicators = ["top 10", "top 5", "best 10", "list", "ranking", "guide", "guide to"]
+            if any(phrase.lower() in title.lower() for phrase in aggregator_indicators):
                 continue
 
             listing = {
@@ -296,6 +279,7 @@ def create_agent(vector_store):
             agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
             verbose=True
         )
+
         return agent
     except Exception as e:
         logging.error(f"Agent creation error: {e}")
