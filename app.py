@@ -23,7 +23,7 @@ import openai
 import requests
 import time
 from langchain.chat_models import ChatOpenAI
-from langchain.embeddings import OpenAIEmbeddings
+from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import FAISS
 from langchain.agents import Tool, initialize_agent, AgentType
 from io import BytesIO
@@ -38,13 +38,13 @@ logging.basicConfig(
     ]
 )
 
-def is_valid_url(url, retries=3, delay=2):
+def is_valid_url(url, retries=2, delay=1):
     """
     Validate URL with multiple retry attempts.
     """
     for attempt in range(retries):
         try:
-            response = requests.head(url, allow_redirects=True, timeout=5)
+            response = requests.head(url, allow_redirects=True, timeout=3)
             if response.status_code == 200:
                 return True
         except requests.RequestException as e:
@@ -55,8 +55,12 @@ def is_valid_url(url, retries=3, delay=2):
 def validate_and_normalize_link(link):
     """
     Try to return a valid link. If invalid, return the original text.
+    Skip validation for certain domains.
     """
+    skip_validation_domains = ["olx.in", "quikr.com"]
     link = link.strip()
+    if any(domain in link for domain in skip_validation_domains):
+        return link  # Skip validation for these domains
     if link.startswith(('http://', 'https://')):
         return link if is_valid_url(link) else link
     potential_link = 'https://' + link
@@ -133,12 +137,16 @@ def perform_search(category):
     Perform a web search using Serper API and return the raw results.
     Adjusted search query for better results.
     """
-    search_query = f"latest {category} openings in Trivandrum"
-    # Optional: Add exclusions gradually
-    # exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
-    # exclusion_query = ' '.join([f"-site:{site}" for site in exclusion_sites])
-    # search_query = f"latest {category} openings in Trivandrum {exclusion_query}"
-    logging.info(f"Performing search with query: {search_query}")
+    search_queries = {
+        "Restaurants": f"newly opened restaurants in Trivandrum",
+        "Boutiques": f"new boutiques in Trivandrum",
+        "Experiences": f"latest experiences in Trivandrum 2025"
+    }
+    search_query = search_queries.get(category, f"new {category} in Trivandrum")
+    exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
+    exclusion_query = ' '.join([f"-site:{site}" for site in exclusion_sites])
+    search_query_with_exclusions = f"{search_query} {exclusion_query}"
+    logging.info(f"Performing search with query: {search_query_with_exclusions}")
     api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
         logging.error("Serper API key not found.")
@@ -148,7 +156,7 @@ def perform_search(category):
         response = requests.get(
             "https://google.serper.dev/search",
             headers={"X-API-KEY": api_key},
-            params={"q": search_query, "num": 10}
+            params={"q": search_query_with_exclusions, "num": 20}  # Increased number of results
         )
         response.raise_for_status()
         results = response.json()
@@ -171,6 +179,7 @@ def parse_search_results(results):
         return []
 
     listings = []
+    initial_count = len(organic_results)
     for item in organic_results:
         try:
             title = item.get("title", "").strip()
@@ -188,6 +197,7 @@ def parse_search_results(results):
                 listings.append(listing)
         except Exception as e:
             logging.warning(f"Error processing item: {e}")
+    logging.info(f"Total organic results fetched: {initial_count}")
     logging.info(f"Parsed {len(listings)} listings after filtering.")
     return listings
 
@@ -200,6 +210,9 @@ def create_vector_store(listings):
         texts = [f"{listing['Name']} {listing['Description']}" for listing in listings]
         vector_store = FAISS.from_texts(texts, embeddings)
         return vector_store
+    except ImportError as e:
+        logging.error("Could not import tiktoken python package. This is needed for OpenAIEmbeddings. Please install it with `pip install tiktoken`.")
+        return None
     except Exception as e:
         logging.error(f"Vector store creation error: {e}")
         return None
@@ -303,7 +316,7 @@ def main():
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 )
             else:
-                st.warning("No results found. Try adjusting your search.")
+                st.warning("No results found. Try adjusting your search by selecting a different category or using broader search terms.")
 
 if __name__ == "__main__":
     main()
