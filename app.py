@@ -22,11 +22,10 @@ import pandas as pd
 import openai
 import requests
 import time
-from crewai import Crew, Task, Agent
-from crewai_tools import SerperDevTool
 from langchain.chat_models import ChatOpenAI
-from langchain.vectorstores import FAISS
 from langchain.embeddings import OpenAIEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.agents import Tool, initialize_agent, AgentType
 from io import BytesIO
 
 # Configure logging
@@ -65,10 +64,10 @@ def validate_and_normalize_link(link):
 
 def extract_listings_from_output(output):
     """
-    Extract relevant data from CrewAI output.
+    Extract relevant data from the agent's output.
     """
     try:
-        results_text = str(getattr(output, 'raw', getattr(output, 'result', str(output))))
+        results_text = str(output)
     except Exception as e:
         logging.error(f"Output extraction error: {e}")
         return []
@@ -123,73 +122,138 @@ def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
         logging.error(f"Excel save error: {e}")
         return None, None
 
-def create_agent(search_params):
+def perform_search(category):
     """
-    Create an Agent for searching listings using FAISS instead of ChromaDB.
+    Perform a web search using Serper API and return the raw results.
     """
-    openai_api_key = os.environ.get('OPENAI_API_KEY')
-    serper_api_key = os.environ.get('SERPER_API_KEY')
+    search_query = f"new {category} in Trivandrum"
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logging.error("Serper API key not found.")
+        return ""
 
-    llm = ChatOpenAI(
-        openai_api_key=openai_api_key,
-        model="gpt-3.5-turbo",
-        temperature=0.7,
-        max_tokens=2500
-    )
+    try:
+        response = requests.get(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key},
+            params={"q": search_query, "num": 10}
+        )
+        response.raise_for_status()
+        results = response.json()
+        return results
+    except Exception as e:
+        logging.error(f"Search API error: {e}")
+        return ""
 
-    search = SerperDevTool(api_key=serper_api_key)
-
-    # Initialize embeddings and FAISS vector store
-    embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-    vector_store = FAISS(embedding_function=embeddings)  # Initialize FAISS without initial data
-
-    goal = f"Find new {search_params['category']} in Trivandrum."
-    task_description = f"""
-    Search for new {search_params['category']} in Trivandrum. Ensure results include name, link, and description.
-    Format as:
-    'Title: [Name]\nLink: [Link]\nSnippet: [Description]'
+def parse_search_results(results):
     """
-
-    agent = Agent(
-        llm=llm,
-        role="Content Finder",
-        goal=goal,
-        tools=[search],
-        vector_store=vector_store,  # Pass the FAISS vector store here
-        verbose=True
-    )
-
-    task = Task(
-        description=task_description,
-        expected_output="A list of at least 10 relevant listings.",
-        agent=agent
-    )
-
-    crew = Crew(
-        agents=[agent],
-        tasks=[task],
-        verbose=True
-    )
-
-    return crew
-
-def run_search(search_params):
+    Parse Serper API results to extract listings.
     """
-    Run the agent-based search and process results.
+    try:
+        organic_results = results.get("organic", [])
+    except Exception as e:
+        logging.error(f"Parsing error: {e}")
+        return []
+
+    listings = []
+    for item in organic_results:
+        try:
+            title = item.get("title", "").strip()
+            link = item.get("link", "").strip()
+            snippet = item.get("snippet", "").strip()
+            if title and link and snippet:
+                listing = {
+                    'Name': title,
+                    'Link': validate_and_normalize_link(link),
+                    'Description': snippet
+                }
+                listings.append(listing)
+        except Exception as e:
+            logging.warning(f"Error processing item: {e}")
+    return listings
+
+def create_vector_store(listings):
+    """
+    Create a FAISS vector store from listings.
+    """
+    try:
+        embeddings = OpenAIEmbeddings(openai_api_key=os.getenv("OPENAI_API_KEY"))
+        texts = [f"{listing['Name']} {listing['Description']}" for listing in listings]
+        vector_store = FAISS.from_texts(texts, embeddings)
+        return vector_store
+    except Exception as e:
+        logging.error(f"Vector store creation error: {e}")
+        return None
+
+def create_agent(vector_store):
+    """
+    Create a LangChain agent with tools.
+    """
+    try:
+        llm = ChatOpenAI(
+            openai_api_key=os.getenv("OPENAI_API_KEY"),
+            model_name="gpt-3.5-turbo",
+            temperature=0.7,
+            max_tokens=2500
+        )
+
+        # Define tools
+        tools = [
+            Tool(
+                name="Search",
+                func=lambda query: perform_search(query),
+                description="Searches the web for information."
+            )
+        ]
+
+        # Initialize agent
+        agent = initialize_agent(
+            tools=tools,
+            llm=llm,
+            agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+            verbose=True
+        )
+
+        return agent
+    except Exception as e:
+        logging.error(f"Agent creation error: {e}")
+        return None
+
+def run_search(category):
+    """
+    Orchestrate the search process.
     """
     try:
         logging.info("Starting search")
-        crew = create_agent(search_params)
-        results = crew.kickoff()
-        listings = extract_listings_from_output(results)
-        if listings:
-            df, excel_data = save_to_excel(listings)
-            return df, excel_data
-        else:
-            logging.warning("No listings found.")
+        raw_results = perform_search(category)
+        if not raw_results:
+            logging.warning("No raw results obtained from search.")
             return None, None
+
+        listings = parse_search_results(raw_results)
+        if not listings:
+            logging.warning("No listings found in search results.")
+            return None, None
+
+        vector_store = create_vector_store(listings)
+        if not vector_store:
+            logging.warning("Failed to create vector store.")
+            return None, None
+
+        agent = create_agent(vector_store)
+        if not agent:
+            logging.warning("Failed to create agent.")
+            return None, None
+
+        # Generate stories for each listing
+        for listing in listings:
+            story = generate_story(listing, category)
+            listing['Story'] = story
+
+        df, excel_data = save_to_excel(listings)
+        return df, excel_data
     except Exception as e:
-        logging.error(f"Search error: {e}")
+        logging.error(f"Search orchestration error: {e}")
         return None, None
 
 def main():
@@ -202,7 +266,7 @@ def main():
 
     if st.sidebar.button("Search"):
         with st.spinner("Searching for the best listings..."):
-            df, excel_data = run_search(search_params)
+            df, excel_data = run_search(search_params['category'])
             if df is not None:
                 st.success(f"✅ Found {len(df)} listings!")
                 st.dataframe(df)
