@@ -25,6 +25,8 @@ import time
 from crewai import Crew, Task, Agent
 from crewai_tools import SerperDevTool
 from langchain.chat_models import ChatOpenAI
+from langchain.vectorstores import FAISS
+from langchain.embeddings import OpenAIEmbeddings
 from io import BytesIO
 
 # Configure logging
@@ -123,7 +125,7 @@ def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
 
 def create_agent(search_params):
     """
-    Create an Agent for searching listings.
+    Create an Agent for searching listings using FAISS instead of ChromaDB.
     """
     openai_api_key = os.environ.get('OPENAI_API_KEY')
     serper_api_key = os.environ.get('SERPER_API_KEY')
@@ -137,6 +139,10 @@ def create_agent(search_params):
 
     search = SerperDevTool(api_key=serper_api_key)
 
+    # Initialize embeddings and FAISS vector store
+    embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+    vector_store = FAISS(embedding_function=embeddings)  # Initialize FAISS without initial data
+
     goal = f"Find new {search_params['category']} in Trivandrum."
     task_description = f"""
     Search for new {search_params['category']} in Trivandrum. Ensure results include name, link, and description.
@@ -149,6 +155,7 @@ def create_agent(search_params):
         role="Content Finder",
         goal=goal,
         tools=[search],
+        vector_store=vector_store,  # Pass the FAISS vector store here
         verbose=True
     )
 
@@ -202,7 +209,7 @@ def main():
                 st.download_button(
                     label="Download Listings",
                     data=excel_data,
-                    file_name='listings.xlsx',
+                    file_name='trivandrum_listings.xlsx',
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 )
             else:
