@@ -131,11 +131,14 @@ def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
 def perform_search(category):
     """
     Perform a web search using Serper API and return the raw results.
-    Exclude unwanted domains to ensure relevance.
+    Adjusted search query for better results.
     """
-    exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
-    exclusion_query = ' '.join([f"-site:{site}" for site in exclusion_sites])
-    search_query = f"new {category} in Trivandrum {exclusion_query}"
+    search_query = f"latest {category} openings in Trivandrum"
+    # Optional: Add exclusions gradually
+    # exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
+    # exclusion_query = ' '.join([f"-site:{site}" for site in exclusion_sites])
+    # search_query = f"latest {category} openings in Trivandrum {exclusion_query}"
+    logging.info(f"Performing search with query: {search_query}")
     api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
         logging.error("Serper API key not found.")
@@ -149,6 +152,7 @@ def perform_search(category):
         )
         response.raise_for_status()
         results = response.json()
+        logging.info(f"Raw search results: {results}")
         return results
     except Exception as e:
         logging.error(f"Search API error: {e}")
@@ -184,6 +188,7 @@ def parse_search_results(results):
                 listings.append(listing)
         except Exception as e:
             logging.warning(f"Error processing item: {e}")
+    logging.info(f"Parsed {len(listings)} listings after filtering.")
     return listings
 
 def create_vector_store(listings):
@@ -285,7 +290,7 @@ def main():
                 st.success(f"✅ Found {len(df)} listings!")
                 
                 for idx, row in df.iterrows():
-                    with st.expander(f"{row['Name']}"):
+                    with st.expander(f"**{row['Name']}**"):
                         st.markdown(f"**Description:** {row['Description']}")
                         st.markdown(f"**[Visit Website]({row['Link']})**")
                         st.markdown(f"**Story:** {row['Story']}")
