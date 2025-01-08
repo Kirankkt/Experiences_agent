@@ -1,11 +1,8 @@
 langchain
 streamlit
-crewai
-crewai_tools
 requests
 openpyxl
 duckdb
 openai
 langchain-community
 faiss-cpu
-
