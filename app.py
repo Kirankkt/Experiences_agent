@@ -97,7 +97,7 @@ def generate_story(listing, category):
     Use GPT to generate a creative and engaging story about the listing.
     """
     prompt = f"""
-    You are a local content creator in Trivandrum. Write a captivating and creative announcement for a new {category[:-1]} in Trivandrum. Make sure to highlight the unique features and what makes it special.
+    You are a local content creator in Trivandrum. Write a captivating and creative announcement for a new {category[:-1]} in Trivandrum. Highlight its unique features, ambiance, specialties, and why locals and visitors should visit. Include a friendly invitation to check it out.
 
     Name: {listing['Name']}
     Description: {listing['Description']}
@@ -106,17 +106,20 @@ def generate_story(listing, category):
     Story:
     """
     try:
-        response = openai.Completion.create(
-            engine="text-davinci-003",
-            prompt=prompt,
-            max_tokens=150,
-            temperature=0.7,
-            n=1,
-            stop=None
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=200,
+            temperature=0.8
         )
-        return response.choices[0].text.strip()
+        story = response['choices'][0]['message']['content'].strip()
+        logging.info(f"Generated story for {listing['Name']}: {story}")
+        return story
     except Exception as e:
-        logging.error(f"Story generation error: {e}")
+        logging.error(f"Story generation error for {listing['Name']}: {e}")
         return "Could not generate story at this time."
 
 def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
@@ -138,9 +141,9 @@ def perform_search(category):
     Adjusted search query for better results.
     """
     search_queries = {
-        "Restaurants": f"newly opened restaurants in Trivandrum",
-        "Boutiques": f"new boutiques in Trivandrum",
-        "Experiences": f"latest experiences in Trivandrum 2025"
+        "Restaurants": "new restaurants in Trivandrum",
+        "Boutiques": "boutiques in Trivandrum",
+        "Experiences": "experiences in Trivandrum"
     }
     search_query = search_queries.get(category, f"new {category} in Trivandrum")
     exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
