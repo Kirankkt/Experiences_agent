@@ -90,24 +90,30 @@ def extract_listings_from_output(output):
 
 def generate_story(listing, category):
     """
-    Use GPT to generate a creative story about the listing.
+    Use GPT to generate a creative and engaging story about the listing.
     """
     prompt = f"""
-    Write a creative announcement for a new {category} in Trivandrum:
+    You are a local content creator in Trivandrum. Write a captivating and creative announcement for a new {category[:-1]} in Trivandrum. Make sure to highlight the unique features and what makes it special.
+
     Name: {listing['Name']}
     Description: {listing['Description']}
     Link: {listing['Link']}
+
+    Story:
     """
     try:
         response = openai.Completion.create(
             engine="text-davinci-003",
             prompt=prompt,
-            max_tokens=300
+            max_tokens=150,
+            temperature=0.7,
+            n=1,
+            stop=None
         )
         return response.choices[0].text.strip()
     except Exception as e:
         logging.error(f"Story generation error: {e}")
-        return ""
+        return "Could not generate story at this time."
 
 def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
     """
@@ -125,8 +131,11 @@ def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
 def perform_search(category):
     """
     Perform a web search using Serper API and return the raw results.
+    Exclude unwanted domains to ensure relevance.
     """
-    search_query = f"new {category} in Trivandrum"
+    exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
+    exclusion_query = ' '.join([f"-site:{site}" for site in exclusion_sites])
+    search_query = f"new {category} in Trivandrum {exclusion_query}"
     api_key = os.getenv("SERPER_API_KEY")
     if not api_key:
         logging.error("Serper API key not found.")
@@ -148,7 +157,9 @@ def perform_search(category):
 def parse_search_results(results):
     """
     Parse Serper API results to extract listings.
+    Exclude unwanted domains to ensure relevance.
     """
+    unwanted_domains = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
     try:
         organic_results = results.get("organic", [])
     except Exception as e:
@@ -162,6 +173,9 @@ def parse_search_results(results):
             link = item.get("link", "").strip()
             snippet = item.get("snippet", "").strip()
             if title and link and snippet:
+                # Check if link contains any unwanted domains
+                if any(domain in link for domain in unwanted_domains):
+                    continue  # Skip this listing
                 listing = {
                     'Name': title,
                     'Link': validate_and_normalize_link(link),
@@ -267,9 +281,16 @@ def main():
     if st.sidebar.button("Search"):
         with st.spinner("Searching for the best listings..."):
             df, excel_data = run_search(search_params['category'])
-            if df is not None:
+            if df is not None and not df.empty:
                 st.success(f"✅ Found {len(df)} listings!")
-                st.dataframe(df)
+                
+                for idx, row in df.iterrows():
+                    with st.expander(f"{row['Name']}"):
+                        st.markdown(f"**Description:** {row['Description']}")
+                        st.markdown(f"**[Visit Website]({row['Link']})**")
+                        st.markdown(f"**Story:** {row['Story']}")
+
+                # Provide option to download all listings
                 st.download_button(
                     label="Download Listings",
                     data=excel_data,
