@@ -1,8 +1,8 @@
-langchain
 streamlit
-requests
-openpyxl
-duckdb
-openai
-langchain-community
+langchain
 faiss-cpu
+openai
+requests
+pandas
+openpyxl
+tiktoken
