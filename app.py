@@ -141,9 +141,9 @@ def perform_search(category):
     Adjusted search query for better results.
     """
     search_queries = {
-        "Restaurants": "new restaurants in Trivandrum",
-        "Boutiques": "boutiques in Trivandrum",
-        "Experiences": "experiences in Trivandrum"
+        "Restaurants": "new restaurants in Trivandrum official website",
+        "Boutiques": "boutiques in Trivandrum official website",
+        "Experiences": "experiences in Trivandrum booking"
     }
     search_query = search_queries.get(category, f"new {category} in Trivandrum")
     exclusion_sites = ["reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com"]
