@@ -1,7 +1,7 @@
 streamlit
 langchain
 faiss-cpu
-openai>=0.28
+openai=0.28
 requests
 pandas
 openpyxl
