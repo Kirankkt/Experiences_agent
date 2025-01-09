@@ -142,56 +142,23 @@ def save_to_excel(listings, filename='trivandrum_listings.xlsx'):
         logging.error(f"Excel save error: {e}")
         return None, None
 
-def perform_search(category):
-    """
-    Perform a web search using Serper API and return the raw results.
-    We refine the query to skip aggregator sites and "top 10" style pages.
-    """
-    # We specifically tell it: official websites, skip aggregator keywords
-    base_queries = {
-        "Restaurants": "restaurants in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -timesofindia -thehindu -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter",
-        "Boutiques": "boutiques in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter",
-        "Experiences": "experiences in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter"
-    }
-    
-    # If the category is not in the base_queries, do a fallback
-    search_query = base_queries.get(
-        category, 
-        f"{category} in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter"
-    )
-
-    logging.info(f"Performing search with query: {search_query}")
-    api_key = os.getenv("SERPER_API_KEY")
-    if not api_key:
-        logging.error("Serper API key not found.")
-        return ""
-
-    try:
-        response = requests.get(
-            "https://google.serper.dev/search",
-            headers={"X-API-KEY": api_key},
-            params={"q": search_query, "num": 20}  # 20 results
-        )
-        response.raise_for_status()
-        results = response.json()
-        logging.info(f"Raw search results: {results}")
-        return results
-    except Exception as e:
-        logging.error(f"Search API error: {e}")
-        return ""
-
 def parse_search_results(results):
     """
     Parse Serper API results to extract listings.
-    Exclude aggregator or big directories for the final display.
+    Exclude aggregator or big directories for the final display
+    but keep it less aggressive for restaurants.
     """
-    # Expand the aggregator or unwanted domains you want to skip
+    # Slightly loosened approach to skip fewer aggregator sites
     unwanted_domains = [
-        "reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com", 
-        "tripadvisor.com", "tripadvisor.in", "zomato.com", "justdial.com", 
-        "wanderlog.com", "youtube.com", "yelp.com", "blogspot.com", "wordpress.com",
+        "reddit.com", "quora.com", "instagram.com", "facebook.com", "twitter.com",
+        "wanderlog.com", "youtube.com", "yelp.com",
         "thehindu.com", "timesofindia.com", "indiatimes.com"
+        # Notice we commented out tripadvisor, zomato, justdial, etc.
+        # because sometimes these sites contain official site references.
+        # "tripadvisor.com", "tripadvisor.in", "zomato.com", "justdial.com",
     ]
+
+    aggregator_indicators = ["top 10", "top 5", "best 10", "list", "ranking", "guide", "guide to"]
 
     try:
         organic_results = results.get("organic", [])
@@ -201,6 +168,7 @@ def parse_search_results(results):
 
     listings = []
     initial_count = len(organic_results)
+
     for item in organic_results:
         try:
             title = item.get("title", "").strip()
@@ -211,14 +179,10 @@ def parse_search_results(results):
                 continue
 
             # If domain is in the unwanted list, skip
-            # e.g. if the link is https://www.tripadvisor.com/....
-            skip_it = any(domain in link for domain in unwanted_domains)
-            if skip_it:
+            if any(domain in link for domain in unwanted_domains):
                 continue
 
             # Optionally also skip if the title/snippet looks like "top 10" or "best X"
-            # That might help further reduce aggregator style results
-            aggregator_indicators = ["top 10", "top 5", "best 10", "list", "ranking", "guide", "guide to"]
             if any(phrase.lower() in title.lower() for phrase in aggregator_indicators):
                 continue
 
@@ -285,20 +249,80 @@ def create_agent(vector_store):
         logging.error(f"Agent creation error: {e}")
         return None
 
+def perform_search(query):
+    """
+    Actually call the Serper dev API with the given query.
+    """
+    api_key = os.getenv("SERPER_API_KEY")
+    if not api_key:
+        logging.error("Serper API key not found.")
+        return {}
+
+    try:
+        response = requests.get(
+            "https://google.serper.dev/search",
+            headers={"X-API-KEY": api_key},
+            params={"q": query, "num": 20}  # 20 results
+        )
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        logging.error(f"Search API error: {e}")
+        return {}
+
+def orchestrate_search(category):
+    """
+    Orchestrates searching with a more refined approach.
+    1) Perform an initial search with moderate filters.
+    2) If results are too few, do a fallback search with minimal filters.
+    """
+    # Step 1: Less restrictive queries for Restaurants, moderate for others
+    base_queries = {
+        # For restaurants, we allow synonyms and only a few negative keywords
+        "Restaurants": "(restaurants OR eateries OR cafes OR 'fine dining') in Trivandrum official site OR 'official website' -tripadvisor -wanderlog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter",
+        "Boutiques": "boutiques in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter",
+        "Experiences": "experiences in Trivandrum official site OR 'official website' -tripadvisor -zomato -justdial -wanderlog -yelp -blog -list -ranking -youtube -facebook -instagram -quora -reddit -twitter"
+    }
+
+    initial_query = base_queries.get(category, f"{category} in Trivandrum")
+    logging.info(f"Performing initial search with query: {initial_query}")
+    raw_results = perform_search(initial_query)
+    listings = parse_search_results(raw_results)
+
+    # Fallback if listings < 5
+    if len(listings) < 5:
+        logging.info(f"Fewer than 5 listings found ({len(listings)}). Relaxing constraints...")
+        fallback_query = f"{category} in Trivandrum"
+        fallback_results = perform_search(fallback_query)
+        fallback_listings = parse_search_results(fallback_results)
+
+        # Merge the two sets of listings (unique by Link or something similar)
+        combined_links = set([l['Link'] for l in listings])
+        for item in fallback_listings:
+            if item['Link'] not in combined_links:
+                listings.append(item)
+                combined_links.add(item['Link'])
+
+    if listings:
+        logging.info(f"Total combined listings after fallback: {len(listings)}")
+    else:
+        logging.warning("No listings found even after fallback.")
+
+    return listings
+
 def run_search(category):
     """
-    Orchestrate the search process.
+    High-level function that:
+    1) Orchestrates the search for the given category.
+    2) Creates vector store and agent.
+    3) Generates GPT-based stories.
+    4) Saves to Excel.
     """
     try:
-        logging.info("Starting search")
-        raw_results = perform_search(category)
-        if not raw_results:
-            logging.warning("No raw results obtained from search.")
-            return None, None
-
-        listings = parse_search_results(raw_results)
+        logging.info("Starting orchestrated search...")
+        listings = orchestrate_search(category)
         if not listings:
-            logging.warning("No listings found in search results.")
+            logging.warning("No listings found. Exiting.")
             return None, None
 
         vector_store = create_vector_store(listings)
@@ -327,7 +351,7 @@ def run_search(category):
 ##############################################################################
 
 def main():
-    # Make sure to set the API key for openai
+    # Set the API key for openai
     openai.api_key = os.getenv("OPENAI_API_KEY")
 
     st.set_page_config(page_title="Trivandrum Experiences Finder", layout="wide")
@@ -357,7 +381,7 @@ def main():
                     mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
                 )
             else:
-                st.warning("No results found. Try adjusting your search by selecting a different category or using broader search terms.")
+                st.warning("No results found. Try relaxing your search or using a broader category.")
 
 
 if __name__ == "__main__":
