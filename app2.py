@@ -251,7 +251,7 @@ def load_scraped_data(file_path):
     Load scraped restaurant data from an Excel file.
     """
     try:
-        df = pd.read_excel(file_path)
+        df = pd.read_csv(file_path)
         logging.info(f"Loaded scraped data with {len(df)} entries.")
         return df
     except Exception as e:
